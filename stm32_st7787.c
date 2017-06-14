@@ -37,33 +37,33 @@ static void setup_serial(void)
   GPIO_InitTypeDef GPIO_InitStructure;
   USART_InitTypeDef USART_InitStructure;
 
-  /* enable peripheral clock for USART1 */
-  RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+  /* enable peripheral clock for USART6 */
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART6, ENABLE);
 
-  /* GPIOB clock enable */
-  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+  /* GPIOG clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOG, ENABLE);
 
-  /* GPIOB Configuration:  USART1 TX on PB6 */
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6;
+  /* GPIOG Configuration:  USART6 TX on PG14 */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
   GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
   GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
-  GPIO_Init(GPIOB, &GPIO_InitStructure);
+  GPIO_Init(GPIOG, &GPIO_InitStructure);
 
-  /* Connect USART1 pins to AF2 */
-  // TX = PB6
-  GPIO_PinAFConfig(GPIOB, GPIO_PinSource6, GPIO_AF_USART1);
+  /* Connect USART6 pins to AF8 */
+  // TX = PG14
+  GPIO_PinAFConfig(GPIOG, GPIO_PinSource14, GPIO_AF_USART6);
 
-  USART_InitStructure.USART_BaudRate = 115200;
+  USART_InitStructure.USART_BaudRate = 500000;
   USART_InitStructure.USART_WordLength = USART_WordLength_8b;
   USART_InitStructure.USART_StopBits = USART_StopBits_1;
   USART_InitStructure.USART_Parity = USART_Parity_No;
   USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
   USART_InitStructure.USART_Mode = USART_Mode_Tx;
-  USART_Init(USART1, &USART_InitStructure);
+  USART_Init(USART6, &USART_InitStructure);
 
-  USART_Cmd(USART1, ENABLE); // enable USART1
+  USART_Cmd(USART6, ENABLE); // enable USART6
 }
 
 
@@ -295,7 +295,7 @@ main()
   delay(2000000);
   setup_serial();
   setup_leds();
-  serial_puts(USART1, "Initialising...\r\n");
+  serial_puts(USART6, "Initialising...\r\n");
   delay(2000000);
 
   for (;;) {
