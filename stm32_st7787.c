@@ -40,6 +40,9 @@
 
 #include <stm32f4xx.h>
 
+#include "st7787.h"
+
+
 #define MCU_HZ 168000000
 
 static void delay(uint32_t nCount)
@@ -53,6 +56,13 @@ static void delay(uint32_t nCount)
      : "=r" (nCount)
      : "0" (nCount)
      : "cc");
+}
+
+
+static inline void
+delay_ns(uint32_t ns)
+{
+  delay((MCU_HZ/(3*1000000)*ns+999)/1000);
 }
 
 
@@ -366,6 +376,8 @@ setup_display_io(void)
   delay(MCU_HZ/1000*120/3);
   /* Now release reset, taking the device into operational mode. */
   GPIO_SetBits(GPIOC, GPIO_Pin_15);
+  /* Wait anoter 120 msec for RESET to complete. */
+  delay(MCU_HZ/1000*120/3);
 }
 
 
@@ -477,6 +489,40 @@ db_read16(void)
 }
 
 
+static void
+display_command(uint8_t cmd, uint16_t *out, uint32_t len)
+{
+  assert_cs();
+
+  /* Write the command byte. */
+  dc_select_command();
+  delay_ns(T_AST);
+  db_select_output();
+  db_write16(cmd);
+  assert_wr();
+  delay_ns(T_DST);
+  deassert_wr();
+  delay_ns(T_DHT);
+  db_select_input();
+
+  if (!len)
+    return;
+
+  /* Read reply. */
+  dc_select_data();
+  delay_ns(T_AST);
+  do
+  {
+    assert_rd();
+    delay_ns(T_RAT);
+    *out++ = db_read16();
+    delay_ns(T_RC);   /* - T_RAT */
+    deassert_rd();
+    delay_ns(T_RDH);
+  } while (--len > 0);
+}
+
+
 int
 main()
 {
@@ -487,11 +533,30 @@ main()
   delay(2000000);
 
   for (;;) {
+    uint16_t buf[5];
+    uint32_t i;
+
     led_on();
-    db_select_output();
-    delay(MCU_HZ/3/2);
+
+    display_command(C_RDDID, buf, 4);
+    serial_puts(USART6, "RDDID:");
+    for (i = 0; i < 4; ++i) {
+      serial_puts(USART6, " ");
+      serial_output_hexbyte(USART6, buf[i] >> 8);
+      serial_output_hexbyte(USART6, buf[i] & 0xff);
+    }
+    serial_puts(USART6, "\r\n");
+
+    display_command(C_RDDST, buf, 5);
+    serial_puts(USART6, "  RDDST:");
+    for (i = 0; i < 5; ++i) {
+      serial_puts(USART6, " ");
+      serial_output_hexbyte(USART6, buf[i] >> 8);
+      serial_output_hexbyte(USART6, buf[i] & 0xff);
+    }
+    serial_puts(USART6, "\r\n");
+
     led_off();
-    db_select_input();
-    delay(MCU_HZ/3/2);
+    delay(MCU_HZ/3);
   }
 }
