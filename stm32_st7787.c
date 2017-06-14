@@ -37,6 +37,7 @@
 */
 
 #include <math.h>
+#include <string.h>
 
 #include <stm32f4xx.h>
 
@@ -549,6 +550,39 @@ display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint3
 }
 
 
+static void
+display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t *pixels)
+{
+  uint16_t buf[4];
+
+  buf[0] = x >> 8;
+  buf[1] = x & 0xff;
+  buf[2] = (x+w-1) >> 8;
+  buf[3] = (x+w-1) & 0xff;
+  display_command(C_CASET, buf, 4, NULL, 0);
+  buf[0] = y >> 8;
+  buf[1] = y & 0xff;
+  buf[2] = (y+h-1) >> 8;
+  buf[3] = (y+h-1) & 0xff;
+  display_command(C_RASET, buf, 4, NULL, 0);
+  display_command(C_RAMWR, pixels, w*h, NULL, 0);
+}
+
+
+static void
+display_cls(void)
+{
+  uint16_t buf[240];
+  uint32_t i;
+
+  memset(buf, 0, sizeof(buf));
+  for (i = 0; i < 320; ++i) {
+    display_blit(0, i, 120, 1, buf);
+    display_blit(120, i, 120, 1, buf);
+  }
+}
+
+
 static uint16_t
 mk_rgb565(uint32_t r, uint32_t g, uint32_t b)
 {
@@ -558,33 +592,69 @@ mk_rgb565(uint32_t r, uint32_t g, uint32_t b)
 
 static uint32_t test_img1_counter = 0;
 
+__attribute__((unused))
 static void
 test_img1(void)
 {
   uint16_t buf[256];
   uint32_t i, j;
 
-  /* Move to new position and write 16x16 pixels. */
-  i = 16*(test_img1_counter % 15);
-  j = 16*((test_img1_counter/15) % 20);
-  buf[0] = i >> 8;
-  buf[1] = i & 0xff;
-  buf[2] = (i+15) >> 8;
-  buf[3] = (i+15) & 0xff;
-  display_command(C_CASET, buf, 4, NULL, 0);
-  buf[0] = j >> 8;
-  buf[1] = j & 0xff;
-  buf[2] = (j+15) >> 8;
-  buf[3] = (j+15) & 0xff;
-  display_command(C_RASET, buf, 4, NULL, 0);
   for (i = 0; i < 16; ++i) {
     for (j = 0; j < 16; ++j) {
       buf[i*16+j] = mk_rgb565(i*2, j*4, test_img1_counter & 0x1f);
     }
   }
-  display_command(C_RAMWR, buf, 256, NULL, 0);
+  i = 16*(test_img1_counter % 15);
+  j = 16*((test_img1_counter/15) % 20);
+  display_blit(i, j, 16, 16, buf);
   ++test_img1_counter;
 }
+
+
+/* Mandelbrot set */
+__attribute__((unused))
+static void
+test_img2(void)
+{
+  uint32_t i, j, k;
+  float p, q, x, y;
+
+  for (j = 0; j < 320; ++j) {
+    uint16_t pixels[240];
+    q = ((float)j-160.0f)*(1.5f/160.0f);
+    for (i = 0; i < 240; ++i) {
+      p = ((float)i-200.0f)*(1.5f/120.0f);
+      x = 0;
+      y = 0;
+      for (k = 0; k < 63; ++k) {
+        float x2 = x*x;
+        float y2 = y*y;
+        float xy = x*y;
+        if (x2+y2 >= 4)
+          break;
+        x = x2 - y2 + p;
+        y = 2*xy + q;
+      }
+      if (k < 63)
+        pixels[i] = mk_rgb565(0, k+1, 0);
+      else
+        pixels[i] = mk_rgb565(0, 0, 0);
+    }
+    display_blit(0, j, 240, 1, pixels);
+  }
+}
+
+
+/* Photo of a chipmonk. */
+#define gimp_image test_img3_chipmonk_data
+#include "chipmunk_herbs_nuts_83281_240x320.c"
+__attribute__((unused))
+static void
+test_img3(void)
+{
+  display_blit(0, 0, gimp_image.width, gimp_image.height, (uint16_t*)gimp_image.pixel_data);
+}
+#undef gimp_image
 
 
 int
@@ -606,16 +676,18 @@ main()
     needed before the display is fully out of sleep mode.
   */
   delay_ms(120);
-  /* Disable external vsync. */
-  display_command(C_VSYNCOUT, NULL, 0, NULL, 0);
-  /* Turn on the display */
-  display_command(C_DISPON, NULL, 0, NULL, 0);
   /*
     Select 16-bit 565 RGB pixel format (mode 5).
     Same for RGB mode (but we don't use it).
   */
   buf[0] = (13 << 4) | 5;
   display_command(C_COLMOD, buf, 1, NULL, 0);
+  /* Clear the screen. */
+  display_cls();
+  /* Disable external vsync. */
+  display_command(C_VSYNCOUT, NULL, 0, NULL, 0);
+  /* Turn on the display */
+  display_command(C_DISPON, NULL, 0, NULL, 0);
 
   for (;;) {
     uint32_t i;
@@ -640,7 +712,9 @@ main()
     }
     serial_puts(USART6, "\r\n");
 
-    test_img1();
+    //test_img1();
+    //test_img2();
+    test_img3();
 
     led_off();
     delay(MCU_HZ/3);
