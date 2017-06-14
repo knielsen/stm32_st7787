@@ -530,21 +530,60 @@ display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint3
 
   db_select_input();
 
-  if (!out_len)
-    return;
-
   /* Read reply. */
-  dc_select_data();
-  delay_ns(T_AST);
-  do
-  {
-    assert_rd();
-    delay_ns(T_RAT);
-    *out++ = db_read16();
-    delay_ns(T_RC);   /* - T_RAT */
-    deassert_rd();
-    delay_ns(T_RDH);
-  } while (--out_len > 0);
+  if (out_len) {
+    dc_select_data();
+    delay_ns(T_AST);
+    do
+    {
+      assert_rd();
+      delay_ns(T_RAT);
+      *out++ = db_read16();
+      delay_ns(T_RC);   /* - T_RAT */
+      deassert_rd();
+      delay_ns(T_RDH);
+    } while (--out_len > 0);
+  }
+
+  deassert_cs();
+}
+
+
+static uint16_t
+mk_rgb565(uint32_t r, uint32_t g, uint32_t b)
+{
+  return ((r&0x1f) << 11) | ((g&0x3f) << 5) | (b&0x1f);
+}
+
+
+static uint32_t test_img1_counter = 0;
+
+static void
+test_img1(void)
+{
+  uint16_t buf[256];
+  uint32_t i, j;
+
+  /* Move to new position and write 16x16 pixels. */
+  i = 16*(test_img1_counter % 15);
+  j = 16*((test_img1_counter/15) % 20);
+  buf[0] = i >> 8;
+  buf[1] = i & 0xff;
+  buf[2] = (i+15) >> 8;
+  buf[3] = (i+15) & 0xff;
+  display_command(C_CASET, buf, 4, NULL, 0);
+  buf[0] = j >> 8;
+  buf[1] = j & 0xff;
+  buf[2] = (j+15) >> 8;
+  buf[3] = (j+15) & 0xff;
+  display_command(C_RASET, buf, 4, NULL, 0);
+  for (i = 0; i < 16; ++i) {
+    for (j = 0; j < 16; ++j) {
+      buf[i*16+j] = mk_rgb565(i*2, j*4, test_img1_counter & 0x1f);
+    }
+  }
+  display_command(C_RAMWR, buf, 256, NULL, 0);
+  ++test_img1_counter;
 }
 
 
@@ -567,6 +606,8 @@ main()
     needed before the display is fully out of sleep mode.
   */
   delay_ms(120);
+  /* Disable external vsync. */
+  display_command(C_VSYNCOUT, NULL, 0, NULL, 0);
   /* Turn on the display */
   display_command(C_DISPON, NULL, 0, NULL, 0);
   /*
@@ -598,6 +639,8 @@ main()
       serial_output_hexbyte(USART6, buf[i] & 0xff);
     }
     serial_puts(USART6, "\r\n");
+
+    test_img1();
 
     led_off();
     delay(MCU_HZ/3);
