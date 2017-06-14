@@ -66,6 +66,13 @@ delay_ns(uint32_t ns)
 }
 
 
+static inline void
+delay_ms(uint32_t ms)
+{
+  delay(MCU_HZ/(3*1000)*ms);
+}
+
+
 static void setup_serial(void)
 {
   GPIO_InitTypeDef GPIO_InitStructure;
@@ -372,12 +379,16 @@ setup_display_io(void)
   GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_NOPULL;
   GPIO_Init(GPIOD, &GPIO_InitStructure);
 
-  /* After power-up, should hold RESET asserted for min 120 msec. */
-  delay(MCU_HZ/1000*120/3);
+  /*
+    After power-up, should hold RESET asserted for min 120 msec.
+    (The datasheet was a bit unclear, not sure if this wait is needed, or
+    if a 20 us reset pulse is enough).
+  */
+  delay_ms(120);
   /* Now release reset, taking the device into operational mode. */
   GPIO_SetBits(GPIOC, GPIO_Pin_15);
   /* Wait anoter 120 msec for RESET to complete. */
-  delay(MCU_HZ/1000*120/3);
+  delay_ms(120);
 }
 
 
@@ -490,7 +501,7 @@ db_read16(void)
 
 
 static void
-display_command(uint8_t cmd, uint16_t *out, uint32_t len)
+display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint32_t out_len)
 {
   assert_cs();
 
@@ -503,9 +514,23 @@ display_command(uint8_t cmd, uint16_t *out, uint32_t len)
   delay_ns(T_DST);
   deassert_wr();
   delay_ns(T_DHT);
+
+  /* Write any command data. */
+  if (in_len) {
+    dc_select_data();
+    delay_ns(T_AST);
+    do {
+      db_write16(*in++);
+      assert_wr();
+      delay_ns(T_DST);
+      deassert_wr();
+      delay_ns(T_DHT);
+    } while (--in_len > 0);
+  }
+
   db_select_input();
 
-  if (!len)
+  if (!out_len)
     return;
 
   /* Read reply. */
@@ -519,26 +544,44 @@ display_command(uint8_t cmd, uint16_t *out, uint32_t len)
     delay_ns(T_RC);   /* - T_RAT */
     deassert_rd();
     delay_ns(T_RDH);
-  } while (--len > 0);
+  } while (--out_len > 0);
 }
 
 
 int
 main()
 {
+  uint16_t buf[5];
+
   setup_serial();
   setup_leds();
   setup_display_io();
   serial_puts(USART6, "Initialisation done.\r\n");
   delay(2000000);
 
+  /* Take the display out of sleep mode. */
+  display_command(C_SLPOUT, NULL, 0, NULL, 0);
+  /*
+    Wait for sleep-out command to complete.
+    Datasheet says 5 msec is enough before next command, but 120 msec is
+    needed before the display is fully out of sleep mode.
+  */
+  delay_ms(120);
+  /* Turn on the display */
+  display_command(C_DISPON, NULL, 0, NULL, 0);
+  /*
+    Select 16-bit 565 RGB pixel format (mode 5).
+    Same for RGB mode (but we don't use it).
+  */
+  buf[0] = (13 << 4) | 5;
+  display_command(C_COLMOD, buf, 1, NULL, 0);
+
   for (;;) {
-    uint16_t buf[5];
     uint32_t i;
 
     led_on();
 
-    display_command(C_RDDID, buf, 4);
+    display_command(C_RDDID, NULL, 0, buf, 4);
     serial_puts(USART6, "RDDID:");
     for (i = 0; i < 4; ++i) {
       serial_puts(USART6, " ");
@@ -547,7 +590,7 @@ main()
     }
     serial_puts(USART6, "\r\n");
 
-    display_command(C_RDDST, buf, 5);
+    display_command(C_RDDST, NULL, 0, buf, 5);
     serial_puts(USART6, "  RDDST:");
     for (i = 0; i < 5; ++i) {
       serial_puts(USART6, " ");

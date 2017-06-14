@@ -10,3 +10,6 @@
 #define C_SWRESET 0x01
 #define C_RDDID 0x04
 #define C_RDDST 0x09
+#define C_SLPOUT 0x11
+#define C_DISPON 0x29
+#define C_COLMOD 0x3A
