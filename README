@@ -1,0 +1,2 @@
+Some code to talk to a ET024002DMU 240x320 colour display.
+The displays are using an ST7787 display controller.
