@@ -382,10 +382,18 @@ setup_display_io(void)
 
   /*
     After power-up, should hold RESET asserted for min 120 msec.
+    Let do a 120 ms reset pulse, followed by a 20 us reset pulse.
     (The datasheet was a bit unclear, not sure if this wait is needed, or
     if a 20 us reset pulse is enough).
   */
+  GPIO_SetBits(GPIOC, GPIO_Pin_15);
+  delay_ms(1);
+  GPIO_ResetBits(GPIOC, GPIO_Pin_15);
   delay_ms(120);
+  GPIO_SetBits(GPIOC, GPIO_Pin_15);
+  delay_ms(1);
+  GPIO_ResetBits(GPIOC, GPIO_Pin_15);
+  delay_ns(20*1000);
   /* Now release reset, taking the device into operational mode. */
   GPIO_SetBits(GPIOC, GPIO_Pin_15);
   /* Wait anoter 120 msec for RESET to complete. */
@@ -719,4 +727,11 @@ main()
     led_off();
     delay(MCU_HZ/3);
   }
+}
+
+/* Disable use of static constructors, called from ST startup code. */
+void
+__libc_init_array(void)
+{
+  /* Nothing. */
 }

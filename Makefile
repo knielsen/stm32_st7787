@@ -80,7 +80,7 @@ CFLAGS  = -ggdb
 CFLAGS += -O3
 CFLAGS += -DSTM32F40_41xxx
 CFLAGS += -Wall -Wextra -Warray-bounds
-CFLAGS += -mlittle-endian -mthumb -mcpu=cortex-m4 -mthumb-interwork
+CFLAGS += -mlittle-endian -mthumb -mcpu=cortex-m4
 CFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS += -ffunction-sections -fdata-sections -std=c99
 
@@ -88,7 +88,7 @@ CFLAGS += -ffunction-sections -fdata-sections -std=c99
 # tell ld which linker file to use
 # (this file is in the current directory)
 LFLAGS  = -Tstm32_flash.ld
-#LFLAGS += --gc-sections
+LFLAGS += -Wl,--gc-sections
 
 
 ######################################################################
@@ -102,11 +102,10 @@ $(PROJ_NAME): $(PROJ_NAME).elf
 
 $(PROJ_NAME).elf: $(SRCS)
 	$(CC) $(INCLUDE) $(DEFS) $(CFLAGS) $(LFLAGS) $^ -o $@ 
-	$(OBJCOPY) -O ihex $(PROJ_NAME).elf   $(PROJ_NAME).hex
 	$(OBJCOPY) -O binary $(PROJ_NAME).elf $(PROJ_NAME).bin
 
 clean:
-	rm -f *.o $(PROJ_NAME).elf $(PROJ_NAME).hex $(PROJ_NAME).bin
+	rm -f *.o $(PROJ_NAME).elf $(PROJ_NAME).bin
 
 # Flash the STM32F4
 flash: $(PROJ_NAME).elf
