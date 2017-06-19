@@ -44,6 +44,9 @@
 #include "st7787.h"
 
 
+#define MODE_16BIT
+//#define MODE_1BIT
+
 #define MCU_HZ 168000000
 
 static void delay(uint32_t nCount)
@@ -356,11 +359,20 @@ setup_display_io(void)
   GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
   GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_NOPULL;
   GPIO_Init(GPIOC, &GPIO_InitStructure);
-  /* Assert RESET, and select 16-bit parallel interface on IM0-2. */
+  /* Assert RESET. */
   GPIO_ResetBits(GPIOC, GPIO_Pin_15);
+#ifdef MODE_16BIT
+  /* Select 16-bit parallel interface on IM0-2. */
   GPIO_ResetBits(GPIOC, GPIO_Pin_13);     /* IM1 <- 0   8/16 over 9/18 bits */
   GPIO_SetBits(GPIOC, GPIO_Pin_14);       /* IM0 <- 1   16 over 8 bits */
   GPIO_SetBits(GPIOC, GPIO_Pin_12);       /* IM2 <- 1   parallel interface */
+#endif
+#ifdef MODE_6BIT
+  /* Select 1-bit serial interface on IM0-2. */
+  GPIO_ResetBits(GPIOC, GPIO_Pin_13);     /* IM1 <- 0   (8/16 over 9/18 bits) */
+  GPIO_ResetBits(GPIOC, GPIO_Pin_14);     /* IM0 <- 0   (8 over 16 bits) */
+  GPIO_ResetBits(GPIOC, GPIO_Pin_12);     /* IM2 <- 0   serial interface */
+#endif
 
   /* TE on PC11 as input. PB16-17 on PC9-10 as input (for now). */
   GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9|GPIO_Pin_10|GPIO_Pin_11;
@@ -401,6 +413,7 @@ setup_display_io(void)
 }
 
 
+#ifdef MODE_16BIT
 static inline void
 assert_rd(void)
 {
@@ -427,6 +440,7 @@ deassert_wr(void)
 {
   GPIO_SetBits(GPIOB, GPIO_Pin_14);
 }
+#endif
 
 
 static inline void
@@ -444,21 +458,32 @@ deassert_cs(void)
 
 
 static inline void
+#ifdef MODE_16BIT
 dc_select_command(void)
+#endif
+#ifdef MODE_1BIT
+scl_low(void)
+#endif
 {
   GPIO_ResetBits(GPIOB, GPIO_Pin_13);
 }
 
 
 static inline void
+#ifdef MODE_16BIT
 dc_select_data(void)
+#endif
+#ifdef MODE_1BIT
+scl_high(void)
+#endif
 {
   GPIO_SetBits(GPIOB, GPIO_Pin_13);
 }
 
 
+#ifdef MODE_16BIT
 static void
-db_select_input(void)
+db_select_input_16(void)
 {
   GPIO_InitTypeDef gpio;
   gpio.GPIO_Pin = GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3| GPIO_Pin_4|
@@ -477,7 +502,7 @@ db_select_input(void)
 
 
 static void
-db_select_output(void)
+db_select_output_16(void)
 {
   GPIO_InitTypeDef gpio;
   gpio.GPIO_Pin = GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3| GPIO_Pin_4|
@@ -507,8 +532,57 @@ db_read16(void)
 {
   return GPIOD->IDR & 0xffff;
 }
+#endif
 
 
+#ifdef MODE_1BIT
+static void
+db_select_input_1(void)
+{
+  GPIO_InitTypeDef gpio;
+  gpio.GPIO_Pin = GPIO_Pin_0;
+  gpio.GPIO_Mode  = GPIO_Mode_IN;
+  gpio.GPIO_Speed = GPIO_Speed_50MHz;
+  gpio.GPIO_OType = GPIO_OType_PP;
+  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
+  GPIO_Init(GPIOD, &gpio);
+  /*
+    ToDo: DB1-17 can be tied to GND or VCC, according to datasheet.
+    But for now, let's leave them floating, to avoid risk of contention between
+    MCU and display pins both in output mode.
+  */
+}
+
+
+static void
+db_select_output_1(void)
+{
+  GPIO_InitTypeDef gpio;
+  gpio.GPIO_Pin = GPIO_Pin_0;
+  gpio.GPIO_Mode  = GPIO_Mode_OUT;
+  gpio.GPIO_Speed = GPIO_Speed_50MHz;
+  gpio.GPIO_OType = GPIO_OType_PP;
+  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
+  GPIO_Init(GPIOD, &gpio);
+}
+
+
+static inline void
+db_write1(uint32_t value)
+{
+  GPIOD->ODR = (GPIOD->ODR & ~0x1) | (value & 0x1);
+}
+
+
+static inline uint32_t
+db_read1(void)
+{
+  return GPIOD->IDR & 0x1;
+}
+#endif
+
+
+#ifdef MODE_16BIT
 static void
 display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint32_t out_len)
 {
@@ -517,7 +591,7 @@ display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint3
   /* Write the command byte. */
   dc_select_command();
   delay_ns(T_AST);
-  db_select_output();
+  db_select_output_16();
   db_write16(cmd);
   assert_wr();
   delay_ns(T_DST);
@@ -537,7 +611,7 @@ display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint3
     } while (--in_len > 0);
   }
 
-  db_select_input();
+  db_select_input_16();
 
   /* Read reply. */
   if (out_len) {
@@ -556,6 +630,111 @@ display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint3
 
   deassert_cs();
 }
+#endif
+
+#ifdef MODE_1BIT
+static void
+display_command(uint8_t cmd, uint16_t *in, uint32_t in_len, uint16_t *out, uint32_t out_len)
+{
+  uint32_t i;
+  uint32_t val;
+
+  db_select_output_1();
+  assert_cs();
+  delay_ns(T_CSS);
+
+  /* Write the command byte. */
+  /* First shift out the data/command bit ('0' for command). */
+  scl_low();
+  db_write1(0);
+  delay_ns(T_SLW);
+  scl_high();
+  delay_ns(T_SHW);
+  /* Then shift out the bits, MSB-to-LSB. */
+  val = cmd;
+  for (i = 8; i; --i) {
+    scl_low();
+    db_write1((val>>7) & 1);
+    val <<= 1;
+    delay_ns(T_SLW);
+    scl_high();
+    delay_ns(T_SHW);
+  }
+
+  /* Write any command data. */
+  if (in_len) {
+    do {
+      val = *in++;
+
+      /* Special case: write framebuffer data needs all 16 bits from buffer. */
+      if (cmd == C_RAMWR) {
+        uint32_t val2 = val >> 8;
+        /* Data/command bit ('1' for data). */
+        scl_low();
+        db_write1(1);
+        delay_ns(T_SLW);
+        scl_high();
+        delay_ns(T_SHW);
+
+        for (i = 8; i; --i) {
+          scl_low();
+          db_write1((val2>>7) & 1);
+          val2 <<= 1;
+          delay_ns(T_SLW);
+          scl_high();
+          delay_ns(T_SHW);
+        }
+      }
+
+      /* Data/command bit ('1' for data). */
+      scl_low();
+      db_write1(1);
+      delay_ns(T_SLW);
+      scl_high();
+      delay_ns(T_SHW);
+
+      for (i = 8; i; --i) {
+        scl_low();
+        db_write1((val>>7) & 1);
+        val <<= 1;
+        delay_ns(T_SLW);
+        scl_high();
+        delay_ns(T_SHW);
+      }
+    } while (--in_len > 0);
+  }
+
+  db_select_input_1();
+
+  /* Read reply. */
+  if (out_len) {
+    /* Dummy bit (according to data sheet, data/command placeholder?). */
+    scl_low();
+    delay_ns(T_SLR);
+    scl_high();
+    delay_ns(T_SHR);
+    /* The dummy bit seems to correspond to dummy read byte in parallel interface. */
+    *out++ = 0;
+
+    while (--out_len > 0) {
+      val = 0;
+      for (i = 8; i; --i) {
+        scl_low();
+        delay_ns(T_SLR);
+        val = (val << 1) | db_read1();
+        scl_high();
+        delay_ns(T_SHR);
+      }
+      *out++ = val;
+    }
+  }
+
+  scl_low();
+  delay_ns(T_SCC);
+  deassert_cs();
+  delay_ns(T_CHW);
+}
+#endif
 
 
 static void
