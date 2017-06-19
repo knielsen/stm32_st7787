@@ -296,6 +296,51 @@ println_float(USART_TypeDef* usart, float f,
 }
 
 
+/* Fast access to GPIO. */
+static inline void
+my_gpio_set(GPIO_TypeDef *gpio, uint32_t bits)
+{
+  gpio->BSRRL = bits;
+}
+
+
+static inline void
+my_gpio_reset(GPIO_TypeDef *gpio, uint32_t bits)
+{
+  gpio->BSRRH = bits;
+}
+
+
+/*
+  Writing a single bit in a GPIO, using bit-banding.
+  BIT_NUMBER is the bit (0..15). VAL is 0 or 1.
+*/
+static inline void
+my_gpio_write_one_bit(GPIO_TypeDef *gpio, uint32_t bit_number, uint32_t val)
+{
+  static const uint32_t bit_band_base = PERIPH_BB_BASE;  /* 0x42000000 */
+  static const uint32_t periph_base = PERIPH_BASE;       /* 0x40000000 */
+  uint32_t byte_offset = (uint32_t)gpio - periph_base + offsetof(GPIO_TypeDef, ODR);
+  uint32_t word_addr = bit_band_base | (byte_offset<<5) | (bit_number<<2);
+  *(volatile uint32_t *)word_addr = val;
+}
+
+
+/*
+  Read a single bit in a GPIO, using bit-banding.
+  BIT_NUMBER is the bit (0..15). Returns 0 or 1.
+*/
+static inline uint32_t
+my_gpio_read_one_bit(GPIO_TypeDef *gpio, uint32_t bit_number)
+{
+  static const uint32_t bit_band_base = PERIPH_BB_BASE;  /* 0x42000000 */
+  static const uint32_t periph_base = PERIPH_BASE;       /* 0x40000000 */
+  uint32_t byte_offset = (uint32_t)gpio - periph_base + offsetof(GPIO_TypeDef, ODR);
+  uint32_t word_addr = bit_band_base | (byte_offset<<5) | (bit_number<<2);
+  return *(volatile uint32_t *)word_addr;
+}
+
+
 #define LED_GPIO_PERIPH RCC_AHB1Periph_GPIOG
 #define LED_GPIO GPIOG
 #define LED_PIN GPIO_Pin_15
@@ -320,7 +365,7 @@ __attribute__((unused))
 static void
 led_on(void)
 {
-  GPIO_SetBits(LED_GPIO, LED_PIN);
+  my_gpio_set(LED_GPIO, LED_PIN);
 }
 
 
@@ -328,7 +373,7 @@ __attribute__((unused))
 static void
 led_off(void)
 {
-  GPIO_ResetBits(LED_GPIO, LED_PIN);
+  my_gpio_reset(LED_GPIO, LED_PIN);
 }
 
 
@@ -391,6 +436,16 @@ setup_display_io(void)
   GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
   GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_NOPULL;
   GPIO_Init(GPIOD, &GPIO_InitStructure);
+  /* Also set output speed etc., for quick change between input and output. */
+  GPIOD->OTYPER = 0x00000000;                    /* 0 means push-pull */
+  GPIOD->OSPEEDR = 0xaaaaaaaa;                  /* 0b10 means 50 MHz */
+  GPIOD->PUPDR = 0x00000000;                    /* 0 means no pull */
+  /*
+    ToDo: DB16-17 (or DB1-17 in 1-bit serial mode) can be tied to GND or VCC,
+    according to datasheet.
+    But for now, let's leave them floating, to avoid risk of contention between
+    MCU and display pins both in output mode.
+  */
 
   /*
     After power-up, should hold RESET asserted for min 120 msec.
@@ -417,28 +472,28 @@ setup_display_io(void)
 static inline void
 assert_rd(void)
 {
-  GPIO_ResetBits(GPIOB, GPIO_Pin_15);
+  my_gpio_reset(GPIOB, GPIO_Pin_15);
 }
 
 
 static inline void
 deassert_rd(void)
 {
-  GPIO_SetBits(GPIOB, GPIO_Pin_15);
+  my_gpio_set(GPIOB, GPIO_Pin_15);
 }
 
 
 static inline void
 assert_wr(void)
 {
-  GPIO_ResetBits(GPIOB, GPIO_Pin_14);
+  my_gpio_reset(GPIOB, GPIO_Pin_14);
 }
 
 
 static inline void
 deassert_wr(void)
 {
-  GPIO_SetBits(GPIOB, GPIO_Pin_14);
+  my_gpio_set(GPIOB, GPIO_Pin_14);
 }
 #endif
 
@@ -446,14 +501,14 @@ deassert_wr(void)
 static inline void
 assert_cs(void)
 {
-  GPIO_ResetBits(GPIOB, GPIO_Pin_12);
+  my_gpio_reset(GPIOB, GPIO_Pin_12);
 }
 
 
 static inline void
 deassert_cs(void)
 {
-  GPIO_SetBits(GPIOB, GPIO_Pin_12);
+  my_gpio_set(GPIOB, GPIO_Pin_12);
 }
 
 
@@ -465,7 +520,7 @@ dc_select_command(void)
 scl_low(void)
 #endif
 {
-  GPIO_ResetBits(GPIOB, GPIO_Pin_13);
+  my_gpio_reset(GPIOB, GPIO_Pin_13);
 }
 
 
@@ -477,7 +532,7 @@ dc_select_data(void)
 scl_high(void)
 #endif
 {
-  GPIO_SetBits(GPIOB, GPIO_Pin_13);
+  my_gpio_set(GPIOB, GPIO_Pin_13);
 }
 
 
@@ -485,38 +540,14 @@ scl_high(void)
 static void
 db_select_input_16(void)
 {
-  GPIO_InitTypeDef gpio;
-  gpio.GPIO_Pin = GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3| GPIO_Pin_4|
-    GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7|GPIO_Pin_8|GPIO_Pin_9|GPIO_Pin_10|
-    GPIO_Pin_11|GPIO_Pin_12|GPIO_Pin_13|GPIO_Pin_14|GPIO_Pin_15;
-  gpio.GPIO_Mode  = GPIO_Mode_IN;
-  gpio.GPIO_Speed = GPIO_Speed_50MHz;
-  gpio.GPIO_OType = GPIO_OType_PP;
-  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
-  GPIO_Init(GPIOD, &gpio);
-  /*
-    ToDo: Do we need to handle DB16-DB17 also? Or can they be left floating,
-    or grounded perhaps?
-  */
+  GPIOD->MODER = 0x00000000;                    /* 0b00 is input mode */
 }
 
 
 static void
 db_select_output_16(void)
 {
-  GPIO_InitTypeDef gpio;
-  gpio.GPIO_Pin = GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3| GPIO_Pin_4|
-    GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7|GPIO_Pin_8|GPIO_Pin_9|GPIO_Pin_10|
-    GPIO_Pin_11|GPIO_Pin_12|GPIO_Pin_13|GPIO_Pin_14|GPIO_Pin_15;
-  gpio.GPIO_Mode  = GPIO_Mode_OUT;
-  gpio.GPIO_Speed = GPIO_Speed_50MHz;
-  gpio.GPIO_OType = GPIO_OType_PP;
-  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
-  GPIO_Init(GPIOD, &gpio);
-  /*
-    ToDo: Do we need to handle DB16-DB17 also? Or can they be left floating,
-    or grounded perhaps?
-  */
+  GPIOD->MODER = 0x55555555;                    /* 0b01 is output mode */
 }
 
 
@@ -539,45 +570,28 @@ db_read16(void)
 static void
 db_select_input_1(void)
 {
-  GPIO_InitTypeDef gpio;
-  gpio.GPIO_Pin = GPIO_Pin_0;
-  gpio.GPIO_Mode  = GPIO_Mode_IN;
-  gpio.GPIO_Speed = GPIO_Speed_50MHz;
-  gpio.GPIO_OType = GPIO_OType_PP;
-  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
-  GPIO_Init(GPIOD, &gpio);
-  /*
-    ToDo: DB1-17 can be tied to GND or VCC, according to datasheet.
-    But for now, let's leave them floating, to avoid risk of contention between
-    MCU and display pins both in output mode.
-  */
+  GPIOD->MODER = (GPIOD->MODER & ~GPIO_MODER_MODER0) | GPIO_Mode_IN;
 }
 
 
 static void
 db_select_output_1(void)
 {
-  GPIO_InitTypeDef gpio;
-  gpio.GPIO_Pin = GPIO_Pin_0;
-  gpio.GPIO_Mode  = GPIO_Mode_OUT;
-  gpio.GPIO_Speed = GPIO_Speed_50MHz;
-  gpio.GPIO_OType = GPIO_OType_PP;
-  gpio.GPIO_PuPd  = GPIO_PuPd_NOPULL;
-  GPIO_Init(GPIOD, &gpio);
+  GPIOD->MODER = (GPIOD->MODER & ~GPIO_MODER_MODER0) | GPIO_Mode_OUT;
 }
 
 
 static inline void
 db_write1(uint32_t value)
 {
-  GPIOD->ODR = (GPIOD->ODR & ~0x1) | (value & 0x1);
+  my_gpio_write_one_bit(GPIOD, 0, value);
 }
 
 
 static inline uint32_t
 db_read1(void)
 {
-  return GPIOD->IDR & 0x1;
+  return my_gpio_read_one_bit(GPIOD, 0);
 }
 #endif
 
